@@ -19,6 +19,17 @@ auto-reload-config = false
 # Normalizations. See: https://nikitabobko.github.io/AeroSpace/guide#normalization
 enable-normalization-flatten-containers = true
 enable-normalization-opposite-orientation-for-nested-containers = true
+# Opt-in BSP normalization. Folds flat tiling containers into binary
+# right-deep BSP shape on every workspace refresh. Default is false.
+# See: https://nikitabobko.github.io/AeroSpace/guide#dynamic-layouts
+enable-normalization-bsp-shape = false
+
+# How new windows are inserted into the tiling tree.
+# Possible values: sibling-of-mru|split-mru
+# - 'sibling-of-mru' (default): append next to the most-recently-used window
+# - 'split-mru':                BSP / Fibonacci — split the MRU window's slot
+# See: https://nikitabobko.github.io/AeroSpace/guide#dynamic-layouts
+tiling-insertion-strategy = 'sibling-of-mru'
 
 # See: https://nikitabobko.github.io/AeroSpace/guide#layouts
 # The 'accordion-padding' specifies the size of accordion padding

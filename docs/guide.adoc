@@ -294,6 +294,14 @@ Configured by `enable-normalization-flatten-containers`
 . Containers that nest into each other must have opposite orientations.
 Configured by `enable-normalization-opposite-orientation-for-nested-containers`
 
+A third, opt-in normalization rewrites flat tiling subtrees into binary BSP shape:
+
+[start=3]
+. `enable-normalization-bsp-shape` (default `false`).
+When enabled, every workspace refresh folds any `tiles` container that has more than two children into a right-deep tree of two-child containers with alternating orientation.
+This is the refresh-time companion of the `split-mru` <<dynamic-layouts,insertion strategy>>: if you opt into BSP on a workspace that already had non-BSP windows, the next refresh migrates the existing tree into BSP shape.
+Accordion subtrees are skipped — they remain "escape islands" inside BSP workspaces.
+
 [.lead]
 *Example 1*
 
@@ -345,6 +353,35 @@ enable-normalization-opposite-orientation-for-nested-containers = false
 ----
 
 Unless you're hardcore i3 user who knows what they are doing, it's recommended to keep the normalizations enabled.
+
+[#dynamic-layouts]
+=== Dynamic layouts
+
+By default, when AeroSpace places a new window into the tiling tree, it inserts it as a sibling of the most-recently-used (MRU) window in the same container.
+This is the i3-like behavior and the default for all existing users.
+
+You can switch to a BSP / Fibonacci-style insertion rule by setting:
+
+[source,toml]
+----
+tiling-insertion-strategy = 'split-mru'
+enable-normalization-bsp-shape = true
+
+# Recommended: keep the existing normalizations enabled — they keep BSP trees stable across opens and closes.
+enable-normalization-flatten-containers = true
+enable-normalization-opposite-orientation-for-nested-containers = true
+----
+
+Possible values for `tiling-insertion-strategy`:
+
+* `sibling-of-mru` (default).
+The new window is appended next to the MRU window in the MRU's container — the i3-like rule.
+* `split-mru`.
+The new window splits the MRU window's slot in the opposite orientation, producing a BSP / Fibonacci layout.
+If the MRU's container is an `accordion`, the strategy falls back to `sibling-of-mru` for that container — accordion subtrees are explicit user choices and stay as "escape islands" inside BSP workspaces.
+
+`enable-normalization-bsp-shape` (described under <<normalization>>) is the refresh-time companion of `split-mru`.
+You only need it if you want to migrate a pre-existing non-BSP workspace into BSP shape — purely-fresh BSP workspaces don't need it because every insertion already lands in the right place.
 
 [#floating-windows]
 === Floating windows
