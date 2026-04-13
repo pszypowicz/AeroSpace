@@ -224,6 +224,14 @@ private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: M
 private func unbindAndGetBindingDataForNewTilingWindow(_ workspace: Workspace, window: Window?) -> BindingData {
     window?.unbindFromParent() // It's important to unbind to get correct data from below
     let mruWindow = workspace.mostRecentWindowRecursive
+    switch config.tilingInsertionStrategy {
+        case .siblingOfMru: return siblingOfMruBindingData(workspace, mruWindow: mruWindow)
+        case .splitMru: return siblingOfMruBindingData(workspace, mruWindow: mruWindow) // todo: implement split-mru insertion
+    }
+}
+
+@MainActor
+private func siblingOfMruBindingData(_ workspace: Workspace, mruWindow: Window?) -> BindingData {
     if let mruWindow, let tilingParent = mruWindow.parent as? TilingContainer {
         return BindingData(
             parent: tilingParent,
