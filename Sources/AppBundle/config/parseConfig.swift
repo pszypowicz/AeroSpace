@@ -106,6 +106,7 @@ private let configParser: [String: any ParserProtocol<Config>] = [
 
     "enable-normalization-flatten-containers": Parser(\.enableNormalizationFlattenContainers, parseBool),
     "enable-normalization-opposite-orientation-for-nested-containers": Parser(\.enableNormalizationOppositeOrientationForNestedContainers, parseBool),
+    "tiling-insertion-strategy": Parser(\.tilingInsertionStrategy, parseTilingInsertionStrategy),
 
     "default-root-container-layout": Parser(\.defaultRootContainerLayout, parseLayout),
     "default-root-container-orientation": Parser(\.defaultRootContainerOrientation, parseDefaultContainerOrientation),
@@ -367,6 +368,13 @@ private func parseDefaultContainerOrientation(_ raw: Json, _ backtrace: ConfigBa
     parseString(raw, backtrace).flatMap {
         DefaultContainerOrientation(rawValue: $0)
             .orFailure(.semantic(backtrace, "Can't parse default container orientation '\($0)'"))
+    }
+}
+
+private func parseTilingInsertionStrategy(_ raw: Json, _ backtrace: ConfigBacktrace) -> ParsedConfig<TilingInsertionStrategy> {
+    parseString(raw, backtrace).flatMap {
+        TilingInsertionStrategy(rawValue: $0)
+            .orFailure(.semantic(backtrace, "Can't parse tiling insertion strategy '\($0)'"))
     }
 }
 

@@ -183,6 +183,42 @@ final class ConfigTest: XCTestCase {
         )
     }
 
+    func testParseTilingInsertionStrategy_default() {
+        let (config, errors) = parseConfig("")
+        assertEquals(errors, [])
+        assertEquals(config.tilingInsertionStrategy, .siblingOfMru)
+    }
+
+    func testParseTilingInsertionStrategy_validValues() {
+        let (siblingCfg, siblingErrors) = parseConfig(
+            """
+            tiling-insertion-strategy = 'sibling-of-mru'
+            """,
+        )
+        assertEquals(siblingErrors, [])
+        assertEquals(siblingCfg.tilingInsertionStrategy, .siblingOfMru)
+
+        let (splitCfg, splitErrors) = parseConfig(
+            """
+            tiling-insertion-strategy = 'split-mru'
+            """,
+        )
+        assertEquals(splitErrors, [])
+        assertEquals(splitCfg.tilingInsertionStrategy, .splitMru)
+    }
+
+    func testParseTilingInsertionStrategy_invalidValue() {
+        let (_, errors) = parseConfig(
+            """
+            tiling-insertion-strategy = 'bsp'
+            """,
+        )
+        assertEquals(
+            errors,
+            ["tiling-insertion-strategy: Can\'t parse tiling insertion strategy \'bsp\'"],
+        )
+    }
+
     func testConfigParseError() {
         assertEquals(
             parseConfig("true").errors,
