@@ -45,6 +45,18 @@ extension TilingContainer {
         }
     }
 
+    /// Flip the container's orientation without cascading to ancestors.
+    ///
+    /// Unlike ``changeOrientation(_:)``, which walks up the parent chain when
+    /// `enableNormalizationOppositeOrientationForNestedContainers` is enabled, this
+    /// helper mutates only `self`. It exists for BSP insertion, where the alternation
+    /// invariant must be preserved for the wider tree and only one specific container
+    /// needs its orientation flipped.
+    @MainActor
+    func flipOrientationInPlace() {
+        _orientation = _orientation.opposite
+    }
+
     func normalizeOppositeOrientationForNestedContainers() {
         if orientation == (parent as? TilingContainer)?.orientation {
             _orientation = orientation.opposite

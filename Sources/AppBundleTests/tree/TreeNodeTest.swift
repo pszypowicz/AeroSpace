@@ -5,6 +5,22 @@ import XCTest
 final class TreeNodeTest: XCTestCase {
     override func setUp() async throws { setUpWorkspacesForTests() }
 
+    func testFlipOrientationInPlace_doesNotCascadeToAncestors() {
+        config.enableNormalizationOppositeOrientationForNestedContainers = true
+        defer { config.enableNormalizationOppositeOrientationForNestedContainers = false }
+        let workspace = Workspace.get(byName: name)
+        let root = workspace.rootTilingContainer
+        let initialRootOrientation = root.orientation
+        let child = TilingContainer.newHTiles(parent: root, adaptiveWeight: 1)
+        XCTAssertEqual(child.orientation, .h)
+
+        child.flipOrientationInPlace()
+
+        XCTAssertEqual(child.orientation, .v)
+        // Ancestor must NOT have been flipped — that's the whole point of the helper.
+        XCTAssertEqual(root.orientation, initialRootOrientation)
+    }
+
     func testChildParentCyclicReferenceMemoryLeak() {
         let workspace = Workspace.get(byName: name) // Don't cache root node
         let window = TestWindow.new(id: 1, parent: workspace.rootTilingContainer)
