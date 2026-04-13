@@ -265,8 +265,15 @@ private func splitMruBindingData(_ workspace: Workspace, mruWindow: Window?) -> 
     if tilingParent.layout == .accordion {
         return siblingOfMruBindingData(workspace, mruWindow: mruWindow)
     }
-    // Single-child parent: deferred to the follow-up commit.
+    // Single-child parent. Wrapping would produce a 1-child-wrapping-1-child shape
+    // that `unbindEmptyAndAutoFlatten` would collapse on the next refresh. Instead,
+    // flip the parent's orientation in place (non-root only — a single-window root
+    // has no alternation constraint yet) and let the new window become a plain
+    // sibling of the MRU.
     if tilingParent.children.count == 1 {
+        if !tilingParent.isRootContainer {
+            tilingParent.flipOrientationInPlace()
+        }
         return siblingOfMruBindingData(workspace, mruWindow: mruWindow)
     }
     // General case: wrap MRU in a new opposite-orientation container at its current slot.
