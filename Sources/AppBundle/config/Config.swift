@@ -46,6 +46,7 @@ struct Config: ConvenienceCopyable {
     var automaticallyUnhideMacosHiddenApps: Bool = false
     var accordionPadding: Int = 30
     var enableNormalizationOppositeOrientationForNestedContainers: Bool = true
+    var enableNormalizationBspShape: Bool = false
     var tilingInsertionStrategy: TilingInsertionStrategy = .siblingOfMru
     var persistentWorkspaces: OrderedSet<String> = []
     var execOnWorkspaceChange: [String] = [] // todo deprecate

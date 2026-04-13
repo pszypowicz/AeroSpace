@@ -189,6 +189,22 @@ final class ConfigTest: XCTestCase {
         assertEquals(config.tilingInsertionStrategy, .siblingOfMru)
     }
 
+    func testParseEnableNormalizationBspShape_defaultIsFalse() {
+        let (config, errors) = parseConfig("")
+        assertEquals(errors, [])
+        assertEquals(config.enableNormalizationBspShape, false)
+    }
+
+    func testParseEnableNormalizationBspShape_explicitTrue() {
+        let (config, errors) = parseConfig(
+            """
+            enable-normalization-bsp-shape = true
+            """,
+        )
+        assertEquals(errors, [])
+        assertEquals(config.enableNormalizationBspShape, true)
+    }
+
     func testParseTilingInsertionStrategy_validValues() {
         let (siblingCfg, siblingErrors) = parseConfig(
             """
