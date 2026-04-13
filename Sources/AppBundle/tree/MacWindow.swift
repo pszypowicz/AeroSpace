@@ -219,11 +219,14 @@ private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: M
     }
 }
 
-// The function is private because it's unsafe. It leaves the window in unbound state.
-// It may also mutate the tree shape (splitMru strategy wraps the MRU window in a new
-// opposite-orientation container).
+// Called when a tiling window joins (or is moved into) a workspace. Dispatches on
+// `config.tilingInsertionStrategy` to decide where the window lands.
+//
+// Unsafe: the caller must `bind` the returned BindingData; until then the window is
+// left in an unbound state. May also mutate the destination workspace's tree
+// (splitMru strategy wraps the MRU window in a new opposite-orientation container).
 @MainActor
-private func unbindAndGetBindingDataForNewTilingWindow(_ workspace: Workspace, window: Window?) -> BindingData {
+func unbindAndGetBindingDataForNewTilingWindow(_ workspace: Workspace, window: Window?) -> BindingData {
     window?.unbindFromParent() // It's important to unbind to get correct data from below
     let mruWindow = workspace.mostRecentWindowRecursive
     switch config.tilingInsertionStrategy {
