@@ -219,14 +219,16 @@ private func unbindAndGetBindingDataForNewWindow(_ windowId: UInt32, _ macApp: M
     }
 }
 
-// The function is private because it's unsafe. It leaves the window in unbound state
+// The function is private because it's unsafe. It leaves the window in unbound state.
+// It may also mutate the tree shape (splitMru strategy wraps the MRU window in a new
+// opposite-orientation container).
 @MainActor
 private func unbindAndGetBindingDataForNewTilingWindow(_ workspace: Workspace, window: Window?) -> BindingData {
     window?.unbindFromParent() // It's important to unbind to get correct data from below
     let mruWindow = workspace.mostRecentWindowRecursive
     switch config.tilingInsertionStrategy {
         case .siblingOfMru: return siblingOfMruBindingData(workspace, mruWindow: mruWindow)
-        case .splitMru: return siblingOfMruBindingData(workspace, mruWindow: mruWindow) // todo: implement split-mru insertion
+        case .splitMru: return splitMruBindingData(workspace, mruWindow: mruWindow)
     }
 }
 
@@ -245,6 +247,41 @@ private func siblingOfMruBindingData(_ workspace: Workspace, mruWindow: Window?)
             index: INDEX_BIND_LAST,
         )
     }
+}
+
+/// BSP-style insertion: wrap the MRU window in a new opposite-orientation TilingContainer
+/// so the new window splits the MRU's slot. Falls back to `siblingOfMruBindingData` for
+/// edge cases where wrapping doesn't apply (no MRU, accordion parent, or single-child parent).
+///
+/// The single-child parent case is handled by a follow-up commit that flips the parent's
+/// orientation in place instead of wrapping (which would be immediately collapsed by
+/// `unbindEmptyAndAutoFlatten` on the next refresh).
+@MainActor
+private func splitMruBindingData(_ workspace: Workspace, mruWindow: Window?) -> BindingData {
+    guard let mruWindow, let tilingParent = mruWindow.parent as? TilingContainer else {
+        return siblingOfMruBindingData(workspace, mruWindow: mruWindow)
+    }
+    // Accordion subtrees are an explicit user choice — treat them as escape islands.
+    if tilingParent.layout == .accordion {
+        return siblingOfMruBindingData(workspace, mruWindow: mruWindow)
+    }
+    // Single-child parent: deferred to the follow-up commit.
+    if tilingParent.children.count == 1 {
+        return siblingOfMruBindingData(workspace, mruWindow: mruWindow)
+    }
+    // General case: wrap MRU in a new opposite-orientation container at its current slot.
+    let mruIndex = mruWindow.ownIndex.orDie()
+    let mruWeight = mruWindow.getWeight(tilingParent.orientation)
+    mruWindow.unbindFromParent()
+    let wrapper = TilingContainer(
+        parent: tilingParent,
+        adaptiveWeight: mruWeight,
+        tilingParent.orientation.opposite,
+        .tiles,
+        index: mruIndex,
+    )
+    mruWindow.bind(to: wrapper, adaptiveWeight: WEIGHT_AUTO, index: 0)
+    return BindingData(parent: wrapper, adaptiveWeight: WEIGHT_AUTO, index: INDEX_BIND_LAST)
 }
 
 @MainActor
