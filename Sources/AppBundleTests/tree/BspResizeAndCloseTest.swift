@@ -31,6 +31,13 @@ final class BspResizeAndCloseTest: XCTestCase {
 
     /// Build a 4-window BSP tree via split-mru (the realistic daily-driver shape).
     /// Returns the workspace and the four windows in insertion order.
+    ///
+    /// After construction every node in a `.tiles` container gets
+    /// `adaptiveWeight = 1000` so the tree mirrors what production trees look like
+    /// after `layoutTiles` has renormalized weights to the parent's pixel
+    /// dimension. Tests that rely on realistic weight magnitudes (resize clamp,
+    /// loop stability) need this because the unit test harness doesn't run the
+    /// actual layout pass.
     @discardableResult
     private func buildFourWindowBsp() async throws -> (Workspace, [TestWindow]) {
         let workspace = Workspace.get(byName: name)
@@ -51,6 +58,14 @@ final class BspResizeAndCloseTest: XCTestCase {
                 ]),
             ]),
         )
+        // Normalize every node's adaptiveWeight to a pixel-scale value.
+        func setWeightsRecursively(_ node: TreeNode) {
+            if let parent = node.parent as? TilingContainer, parent.layout == .tiles {
+                node.setWeight(parent.orientation, 1000)
+            }
+            for c in node.children { setWeightsRecursively(c) }
+        }
+        setWeightsRecursively(workspace.rootTilingContainer)
         return (workspace, windows)
     }
 
@@ -86,9 +101,10 @@ final class BspResizeAndCloseTest: XCTestCase {
     func testFourWindowBsp_baseline_allWeightsPositive() async throws {
         let (workspace, _) = try await buildFourWindowBsp()
         assertAllTilesWeightsPositive(workspace.rootTilingContainer)
-        // Sanity: every tiles container's children have equal weight by default (1).
+        // Sanity: every tiles container's children carry the realistic 1000 px weight
+        // that buildFourWindowBsp normalizes to.
         for triple in tilesWeightTriples(workspace.rootTilingContainer) {
-            XCTAssertEqual(triple.weight, 1.0, accuracy: 0.0001)
+            XCTAssertEqual(triple.weight, 1000.0, accuracy: 0.0001)
         }
     }
 
@@ -124,29 +140,28 @@ final class BspResizeAndCloseTest: XCTestCase {
     // MARK: - Resize — loop (left/right in a loop)
 
     func testResize_smart_plusMinusLoop_weightsStayPositiveAndBounded() async throws {
-        // The "left and right in a loop" stress test the user asked for. The loop
-        // is intentionally asymmetric at the boundary: the first `+1` on a weight-1
-        // window gets clamped (sibling can't go below MIN_TILING_WEIGHT) while the
-        // following `-1` applies fully, so weights drift within a small window —
-        // but every intermediate state must keep every tiles child strictly positive
-        // and no weight may explode. This mirrors what the user would feel
-        // hammering alt-minus / alt-equal over and over without producing the
-        // "borders overlap" visual bug.
+        // The "left and right in a loop" stress test the user asked for. At
+        // realistic pixel-scale weights (~1000 each), +50/-50 never hits the
+        // clamp, so the loop should return to a state very close to its start.
+        // Every intermediate state must keep every tiles child >= MIN_TILING_WEIGHT.
         let (workspace, _) = try await buildFourWindowBsp()
         let focused = workspace.allLeafWindowsRecursive.last!
         XCTAssertTrue(focused.focusWindow())
+        let initialWeight = focused.getWeight(.h)
 
         for _ in 0 ..< 20 {
-            try await ResizeCommand(args: ResizeCmdArgs(rawArgs: [], dimension: .smart, units: .add(1))).run(.defaultEnv, .emptyStdin)
+            try await ResizeCommand(args: ResizeCmdArgs(rawArgs: [], dimension: .smart, units: .add(50))).run(.defaultEnv, .emptyStdin)
             assertAllTilesWeightsPositive(workspace.rootTilingContainer)
-            try await ResizeCommand(args: ResizeCmdArgs(rawArgs: [], dimension: .smart, units: .subtract(1))).run(.defaultEnv, .emptyStdin)
+            try await ResizeCommand(args: ResizeCmdArgs(rawArgs: [], dimension: .smart, units: .subtract(50))).run(.defaultEnv, .emptyStdin)
             assertAllTilesWeightsPositive(workspace.rootTilingContainer)
         }
 
-        // Bounded: every leaf weight within a sensible range even after many loops.
+        // No clamp fired → +50/-50 is a zero-sum pair → the final weight equals the
+        // initial weight exactly.
+        XCTAssertEqual(focused.getWeight(.h), initialWeight, accuracy: 0.0001)
+        // Every tiles child still above the minimum.
         for triple in tilesWeightTriples(workspace.rootTilingContainer) {
             XCTAssertGreaterThanOrEqual(triple.weight, MIN_TILING_WEIGHT)
-            XCTAssertLessThan(triple.weight, 100.0, "Weight drifted far from its starting value (1.0)")
         }
     }
 
