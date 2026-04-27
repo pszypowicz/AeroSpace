@@ -1,10 +1,21 @@
+import Common
+
 extension Workspace {
+    /// Defaults to the global config flag. A future per-workspace override layer
+    /// will inspect a per-workspace map first; for now this is a thin wrapper so
+    /// every normalizer dispatch goes through a single point.
+    @MainActor func isNormalizationEnabled(_ kind: NormalizationKind) -> Bool {
+        config.isNormalizationEnabled(kind)
+    }
+
     @MainActor func normalizeContainers() {
-        rootTilingContainer.unbindEmptyAndAutoFlatten() // Beware! rootTilingContainer may change after this line of code
-        if config.enableNormalizationOppositeOrientationForNestedContainers {
+        // Always called: the function also removes effectively-empty containers
+        // regardless of the flatten flag.
+        rootTilingContainer.unbindEmptyAndAutoFlatten(allowFlatten: isNormalizationEnabled(.flattenContainers))
+        if isNormalizationEnabled(.oppositeOrientationForNestedContainers) {
             rootTilingContainer.normalizeOppositeOrientationForNestedContainers()
         }
-        if config.enableNormalizationBspShape {
+        if isNormalizationEnabled(.bspShape) {
             rootTilingContainer.normalizeBspShape()
         }
     }
@@ -99,13 +110,13 @@ extension TilingContainer {
         }
     }
 
-    @MainActor fileprivate func unbindEmptyAndAutoFlatten() {
-        if let child = children.singleOrNil(), config.enableNormalizationFlattenContainers && (child is TilingContainer || !isRootContainer) {
+    @MainActor fileprivate func unbindEmptyAndAutoFlatten(allowFlatten: Bool) {
+        if let child = children.singleOrNil(), allowFlatten && (child is TilingContainer || !isRootContainer) {
             child.unbindFromParent()
             let mru = parent?.mostRecentChild
             let previousBinding = unbindFromParent()
             child.bind(to: previousBinding.parent, adaptiveWeight: previousBinding.adaptiveWeight, index: previousBinding.index)
-            (child as? TilingContainer)?.unbindEmptyAndAutoFlatten()
+            (child as? TilingContainer)?.unbindEmptyAndAutoFlatten(allowFlatten: allowFlatten)
             if mru != self {
                 mru?.markAsMostRecentChild()
             } else {
@@ -113,7 +124,7 @@ extension TilingContainer {
             }
         } else {
             for child in children {
-                (child as? TilingContainer)?.unbindEmptyAndAutoFlatten()
+                (child as? TilingContainer)?.unbindEmptyAndAutoFlatten(allowFlatten: allowFlatten)
             }
             if children.isEmpty && !isRootContainer {
                 unbindFromParent()
