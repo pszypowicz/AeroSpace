@@ -5,12 +5,25 @@ import Common
 ///
 /// Resize distributes the requested delta zero-sum between the focused node and its
 /// siblings (`sibling -= diff / (n - 1)`). Without a floor, a delta larger than a
-/// sibling's share of the weight space drives that sibling below zero, which the
-/// layout math then renders as an inverted / overlapping rect. Clamping to a
-/// strictly-positive minimum is the upstream-safe fix: the requested delta is
-/// clamped to whatever is actually applicable, and the operation remains
-/// zero-sum so no weight leaks out of the parent.
-let MIN_TILING_WEIGHT: CGFloat = 0.1
+/// sibling's share of the weight space drives the sibling to (or below) zero,
+/// which produces two visible bugs:
+///
+///   1. Negative weights invert the layout rect — the sibling renders past its
+///      assigned parent bounds (windows overlap or run off-monitor).
+///   2. Near-zero weights request a rect smaller than the app's own content
+///      minimum size. macOS apps refuse to shrink below that minimum, so the
+///      window keeps its actual on-screen size and simply sticks out past its
+///      assigned rect — which on a multi-monitor setup looks like a window
+///      spilling from one monitor onto the next.
+///
+/// `adaptiveWeight` is stored in pixel units (`layoutTiles` in
+/// `layoutRecursive.swift` renormalizes the weight sum to the parent's
+/// dimension on every pass). A conservative floor of 100 pixels is well below
+/// any reasonable app's content minimum and keeps the clamped side of a resize
+/// visibly non-zero. Apps with larger content minimums will still overflow
+/// at 100 px — that's a deeper AppKit limitation — but the common case looks
+/// right.
+let MIN_TILING_WEIGHT: CGFloat = 100
 
 struct ResizeCommand: Command { // todo cover with tests
     let args: ResizeCmdArgs
@@ -64,6 +77,15 @@ struct ResizeCommand: Command { // todo cover with tests
             .filter { $0 != node }
             .map { ($0.getWeight(parent.orientation) - MIN_TILING_WEIGHT) * CGFloat(parent.children.count - 1) }
             .min() ?? CGFloat.greatestFiniteMagnitude
+
+        // If the constraints are mutually unsatisfiable — i.e. at least one side is
+        // already below MIN_TILING_WEIGHT so no diff keeps both sides ≥ MIN — bail
+        // out cleanly rather than picking one constraint and violating the other.
+        // In production this never happens (layoutTiles renormalizes weights to
+        // the parent's pixel dimension on every pass, which is always >> MIN);
+        // it only comes up in unit tests where weights are synthesized by hand.
+        if nodeMinDiff > siblingMaxDiff { return .succ }
+
         let diff = max(nodeMinDiff, min(siblingMaxDiff, requestedDiff))
 
         // If the request was fully clamped away (e.g. all siblings already at MIN), bail out
