@@ -4,12 +4,60 @@ import Common
 @MainActor
 private var resizeWithMouseTask: Task<(), any Error>? = nil
 
+/// Lifecycle of the resize-with-mouse interaction. Transitions:
+///   .idle        -> .dragging      first tick of a user drag (set by `resizeWithMouse`)
+///   .dragging    -> .postRelease   `resetManipulatedWithMouseIfPossible` runs on lmb-up
+///   .postRelease -> .idle          implicit, once `until` passes; or explicit on next .dragging
+///
+/// The `.postRelease` window covers the period after lmb-up where the
+/// daemon's own `setAxFrame` calls (from the post-release refresh) fire
+/// `KAXResizedNotification` events back at us. Without the
+/// `shouldSuppressAxResize` query, a single user gesture would produce two
+/// passes of weight reshape: once for the real drag, once for the phantom
+/// AX events the daemon's own refresh stirred up.
+enum ResizeMouseState {
+    case idle
+    case dragging(windowId: UInt32)
+    case postRelease(until: Date)
+
+    /// True while AX `KAXResizedNotification` events should be treated as
+    /// layout traffic (refresh-only) rather than user input. Returns false
+    /// once a `.postRelease` deadline has passed even if the state hasn't
+    /// transitioned back to `.idle` - the next `.dragging` write will flip
+    /// the state explicitly, no eager cleanup needed.
+    var shouldSuppressAxResize: Bool {
+        if case let .postRelease(until) = self, Date() < until { return true }
+        return false
+    }
+}
+
+@MainActor
+private var resizeMouseState: ResizeMouseState = .idle
+
 func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutableRawPointer?) {
     let notif = notif as String
     let windowId = ax.containingWindowId()
     Task { @MainActor in
         guard let token: RunSessionGuard = .isServerEnabled else { return }
+        // Pre-await suppression: `.postRelease` from a recent lmb-up.
+        if resizeMouseState.shouldSuppressAxResize {
+            scheduleCancellableCompleteRefreshSession(.ax(notif))
+            return
+        }
         guard let windowId, let window = Window.get(byId: windowId), try await isManipulatedWithMouse(window) else {
+            scheduleCancellableCompleteRefreshSession(.ax(notif))
+            return
+        }
+        // Re-check synchronously AFTER the await. lmb-up's Task may have
+        // transitioned the state to `.postRelease` (and released the
+        // button) while we were suspended. The button-down check stays
+        // separate because button state is an external input, not part of
+        // the state machine.
+        if resizeMouseState.shouldSuppressAxResize {
+            scheduleCancellableCompleteRefreshSession(.ax(notif))
+            return
+        }
+        if NSEvent.pressedMouseButtons != 1 {
             scheduleCancellableCompleteRefreshSession(.ax(notif))
             return
         }
@@ -25,8 +73,26 @@ func resizedObs(_: AXObserver, ax: AXUIElement, notif: CFString, _: UnsafeMutabl
 
 @MainActor
 func resetManipulatedWithMouseIfPossible() async throws {
-    guard let manipulatedId = currentlyManipulatedWithMouseWindowId else { return }
+    // Snapshot prior state BEFORE we transition. If the prior state was
+    // .dragging we have a known window to reconcile around. If it wasn't
+    // (the inner Task hadn't yet committed to .dragging because it was
+    // still suspended in `await window.getAxRect()` when the user
+    // released) we still need the gate + cancellation to fire so the
+    // in-flight Task throws at its next await rather than resuming and
+    // running resize math against post-release cursor positions.
+    let priorState = resizeMouseState
+    // ALWAYS run these. They're correct in both .idle and .dragging
+    // priors and they close the race where a fast release happens
+    // before the inner Task transitions state.
+    resizeMouseState = .postRelease(until: Date().addingTimeInterval(0.5))
     currentlyManipulatedWithMouseWindowId = nil
+    resizeWithMouseTask?.cancel()
+    resizeWithMouseTask = nil
+
+    // Reconcile only if there was a known dragged window. Without one
+    // we have nothing to reconcile around - the gate+cancel above is
+    // sufficient cleanup.
+    guard case let .dragging(manipulatedId) = priorState else { return }
     for workspace in Workspace.all {
         workspace.resetResizeWeightBeforeResizeRecursive()
     }
@@ -139,6 +205,19 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
         case .tilingContainer:
             guard let rect = try await window.getAxRect() else { return }
             guard let lastAppliedLayoutRect = window.lastAppliedLayoutPhysicalRect else { return }
+            // Transition the state machine to .dragging before any further
+            // work. If we deferred this to the end of the function (as the
+            // original code did), `lmb-up` arriving mid-execution would see
+            // the state still in .idle and `resetManipulatedWithMouseIfPossible`
+            // would return early without running the reconcile, leaving the
+            // daemon's view of the dragged window's weight permanently out of
+            // sync with the user's drag.
+            //
+            // The legacy `currentlyManipulatedWithMouseWindowId` global is
+            // kept in sync because `layoutRecursive.swift:30` and
+            // `moveWithMouse.swift` still read it.
+            resizeMouseState = .dragging(windowId: window.windowId)
+            currentlyManipulatedWithMouseWindowId = window.windowId
             let (lParent, lOwnIndex) = window.closestParent(hasChildrenInDirection: .left, withLayout: .tiles) ?? (nil, nil)
             let (dParent, dOwnIndex) = window.closestParent(hasChildrenInDirection: .down, withLayout: .tiles) ?? (nil, nil)
             let (uParent, uOwnIndex) = window.closestParent(hasChildrenInDirection: .up, withLayout: .tiles) ?? (nil, nil)
@@ -186,7 +265,6 @@ private func resizeWithMouse(_ window: Window) async throws { // todo cover with
                     }
                 }
             }
-            currentlyManipulatedWithMouseWindowId = window.windowId
     }
 }
 
