@@ -44,7 +44,13 @@ func resetManipulatedWithMouseIfPossible() async throws {
     // state. Without this, alternating-direction drags compound their
     // errors and 'click another window to fix it' was the only recovery.
     if let window = Window.get(byId: manipulatedId), let workspace = window.nodeWorkspace {
-        try await reconcileWeightsFromAxRects(workspace)
+        // Pass the manipulated window's id so the reconcile knows to trust
+        // its actual rect even if it differs from lastApplied. For other
+        // windows, a divergence indicates app refusal and we skip - but for
+        // the dragged window the user's gesture is the source of truth, and
+        // lastApplied is stale (the layout pass skips setAxFrame for the
+        // currently-manipulated window).
+        try await reconcileWeightsFromAxRects(workspace, draggedWindowId: manipulatedId)
     }
 
     scheduleCancellableCompleteRefreshSession(
@@ -59,7 +65,7 @@ func resetManipulatedWithMouseIfPossible() async throws {
 /// borrow the dimension from any descendant leaf (all descendants of a
 /// container share its extent in the parent's orientation by construction).
 @MainActor
-private func reconcileWeightsFromAxRects(_ workspace: Workspace) async throws {
+private func reconcileWeightsFromAxRects(_ workspace: Workspace, draggedWindowId: UInt32? = nil) async throws {
     func leafRectDimension(_ node: TreeNode, _ orientation: Orientation) async throws -> CGFloat? {
         if let window = node as? Window {
             return try await window.getAxRect()?.getDimension(orientation)
@@ -71,11 +77,46 @@ private func reconcileWeightsFromAxRects(_ workspace: Workspace) async throws {
         }
         return nil
     }
+    /// Returns the layout-pass-requested dimension for `node` along the
+    /// parent orientation, or nil if there's no last-applied rect to compare
+    /// against. Used to detect refusals: if `actualDim - lastAppliedDim` is
+    /// significantly positive, the app refused to shrink and the actual
+    /// dimension does NOT represent what the daemon wants - it represents
+    /// what the app insisted on. Writing that into the weight would launder
+    /// the refusal into permanent state and the next layout pass would
+    /// propagate the bigger size everywhere.
+    func lastAppliedDim(_ node: TreeNode, _ orientation: Orientation) -> CGFloat? {
+        if let window = node as? Window {
+            return window.lastAppliedLayoutPhysicalRect?.getDimension(orientation)
+        }
+        for leaf in node.allLeafWindowsRecursive {
+            if let d = leaf.lastAppliedLayoutPhysicalRect?.getDimension(orientation) {
+                return d
+            }
+        }
+        return nil
+    }
+    /// True if the subtree rooted at `node` contains the window the user
+    /// just finished dragging. The user's gesture is authoritative for that
+    /// subtree, so we always reconcile its weight to the actual rect even
+    /// if it differs from `lastApplied` (which is stale because the layout
+    /// pass skips setAxFrame for the currently-manipulated window).
+    func subtreeContainsDraggedWindow(_ node: TreeNode) -> Bool {
+        guard let id = draggedWindowId else { return false }
+        if let window = node as? Window { return window.windowId == id }
+        return node.allLeafWindowsRecursive.contains { $0.windowId == id }
+    }
     func recurse(_ container: TilingContainer) async throws {
         let orientation = container.orientation
         for child in container.children {
             if let dim = try await leafRectDimension(child, orientation) {
-                child.setWeight(orientation, dim)
+                let lastApplied = lastAppliedDim(child, orientation)
+                let drift = lastApplied.map { abs(dim - $0) } ?? 0
+                let isDragged = subtreeContainsDraggedWindow(child)
+                let isRefusal = drift > 5 && !isDragged
+                if !isRefusal {
+                    child.setWeight(orientation, dim)
+                }
             }
             if let inner = child as? TilingContainer {
                 try await recurse(inner)
