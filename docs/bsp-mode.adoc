@@ -1,0 +1,60 @@
+= BSP mode
+include::util/site-attributes.adoc[]
+
+include::util/header.adoc[]
+
+AeroSpace's default tiling lets a container hold any number of children.
+BSP mode is an opt-in normalization that reshapes the tree on every refresh so each container has at most two children, producing the layout pattern from https://github.com/baskerville/bspwm[bspwm] / https://github.com/koekeishiya/yabai[yabai].
+
+[#enabling]
+== Enabling
+
+Globally, in `aerospace.toml`:
+
+[source,toml]
+----
+enable-normalization-bsp-shape = true
+----
+
+Per-workspace at runtime (override is in-memory only):
+
+[source,bash]
+----
+aerospace enable-normalization bsp-shape on --workspace 5
+aerospace enable-normalization bsp-shape off --workspace 5
+aerospace enable-normalization bsp-shape toggle    # focused workspace
+aerospace enable-normalization bsp-shape reset --workspace 5
+----
+
+[#direction-keys]
+== Direction keys: `move` vs `swap`
+
+AeroSpace ships two commands that take a direction:
+
+- `move <dir>` - i3-style restructure. Rebinds the focused window to a new spot in the tree.
+- `swap <dir>` - bspwm/yabai-style swap. Exchanges the focused window with its directional tree neighbor; tree shape is unchanged.
+
+With BSP off, bind direction keys to `move`. With BSP on, bind them to `swap`: the tree must stay binary, so the only useful effect of a direction key is who occupies which leaf.
+
+A common setup that supports both modes:
+
+[source,toml]
+----
+[mode.main.binding]
+alt-h = 'focus left'
+alt-j = 'focus down'
+alt-k = 'focus up'
+alt-l = 'focus right'
+
+# i3-style restructure
+alt-shift-h = 'move left'
+alt-shift-j = 'move down'
+alt-shift-k = 'move up'
+alt-shift-l = 'move right'
+
+# bspwm-style position swap
+alt-cmd-h = 'swap left'
+alt-cmd-j = 'swap down'
+alt-cmd-k = 'swap up'
+alt-cmd-l = 'swap right'
+----
