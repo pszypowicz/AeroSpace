@@ -113,6 +113,10 @@ open class TreeNode: Equatable, AeroAny {
     }
 
     var mostRecentChild: TreeNode? { _mruChildren.mostRecent ?? children.last }
+    /// Children ordered from most-recently-bound to least, as tracked by
+    /// `_mruChildren`. Only contains children for which `markAsMostRecentChild`
+    /// has fired (which is every bind path through this codebase).
+    var mruChildrenOrdered: [TreeNode] { Array(_mruChildren) }
 
     @discardableResult
     func unbindFromParent() -> BindingData {
