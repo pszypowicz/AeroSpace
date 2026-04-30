@@ -1,11 +1,9 @@
 import Common
 
 extension Workspace {
-    /// Defaults to the global config flag. A future per-workspace override layer
-    /// will inspect a per-workspace map first; for now this is a thin wrapper so
-    /// every normalizer dispatch goes through a single point.
+    /// Returns the per-workspace override if set, otherwise the global config flag.
     @MainActor func isNormalizationEnabled(_ kind: NormalizationKind) -> Bool {
-        config.isNormalizationEnabled(kind)
+        normalizationOverride[kind] ?? config.isNormalizationEnabled(kind)
     }
 
     @MainActor func normalizeContainers() {
