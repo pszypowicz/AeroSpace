@@ -324,4 +324,37 @@ final class NormalizeBspShapeTest: XCTestCase {
         }
         assertAlternates(workspace.rootTilingContainer, expected: .h)
     }
+
+    /// The central claim of the per-workspace override feature: two workspaces
+    /// with different overrides normalize independently. The shape on each is
+    /// determined by that workspace's effective setting, not the global config
+    /// alone.
+    func testBspShape_perWorkspaceOverride_doesNotLeakAcrossWorkspaces() {
+        config.enableNormalizationBspShape = true
+        let off = Workspace.get(byName: "ws-off-\(name)")
+        let on = Workspace.get(byName: "ws-on-\(name)")
+        off.normalizationOverride[.bspShape] = false
+        // 'on' inherits the global config (true).
+
+        for workspace in [off, on] {
+            for id: UInt32 in 1 ... 3 {
+                TestWindow.new(id: id, parent: workspace.rootTilingContainer)
+            }
+            workspace.normalizeContainers()
+        }
+
+        // bsp-shape OFF on this workspace: tree stays flat.
+        assertEquals(
+            off.rootTilingContainer.layoutDescription,
+            .h_tiles([.window(1), .window(2), .window(3)]),
+        )
+        // bsp-shape ON on this workspace: standard fold.
+        assertEquals(
+            on.rootTilingContainer.layoutDescription,
+            .h_tiles([
+                .window(1),
+                .v_tiles([.window(2), .window(3)]),
+            ]),
+        )
+    }
 }
