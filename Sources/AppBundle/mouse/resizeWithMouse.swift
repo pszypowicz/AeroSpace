@@ -174,8 +174,11 @@ private func reconcileWeightsFromAxRects(_ workspace: Workspace, draggedWindowId
     }
     func recurse(_ container: TilingContainer) async throws {
         let orientation = container.orientation
+        // Only tiles children carry an adaptive weight; accordion children
+        // all share the parent's full extent and `setWeight` would die.
+        let reconcileChildren = container.layout == .tiles
         for child in container.children {
-            if let dim = try await leafRectDimension(child, orientation) {
+            if reconcileChildren, let dim = try await leafRectDimension(child, orientation) {
                 let lastApplied = lastAppliedDim(child, orientation)
                 let drift = lastApplied.map { abs(dim - $0) } ?? 0
                 let isDragged = subtreeContainsDraggedWindow(child)
