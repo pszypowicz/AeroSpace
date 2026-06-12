@@ -12,6 +12,11 @@ final class AxSizeVerdictTest: XCTestCase {
             axSizeVerdict(requested: CGSize(width: 800, height: 600), actual: CGSize(width: 793, height: 589), lastRefusedSize: nil),
             .applied,
         )
+        // Deviation of exactly the tolerance still counts as applied
+        XCTAssertEqual(
+            axSizeVerdict(requested: CGSize(width: 820, height: 600), actual: CGSize(width: 800, height: 600), lastRefusedSize: nil),
+            .applied,
+        )
     }
 
     func testStuckWidthPerturbsHeight() {
@@ -57,7 +62,20 @@ final class AxSizeVerdictTest: XCTestCase {
         )
     }
 
-    func testRefusalRetriedAfterActualSizeChanges() {
+    func testKnownRefusalComparesOnlyStuckDimensions() {
+        // Width is pinned at 1278; the height is accepted and tracks a new layout target.
+        // The cached height (captured at a different target) must not invalidate the refusal
+        XCTAssertEqual(
+            axSizeVerdict(
+                requested: CGSize(width: 1690, height: 900),
+                actual: CGSize(width: 1278, height: 900),
+                lastRefusedSize: CGSize(width: 1278, height: 1074),
+            ),
+            .knownRefusal,
+        )
+    }
+
+    func testRefusalRetriedAfterStuckDimensionChanges() {
         XCTAssertEqual(
             axSizeVerdict(
                 requested: CGSize(width: 1690, height: 1064),
@@ -68,10 +86,12 @@ final class AxSizeVerdictTest: XCTestCase {
         )
     }
 
-    func testPerturbationIsClampedToMinimumDimension() {
+    func testPerturbationGrowsWhenShrinkWouldDegenerate() {
+        // Shrinking a 120pt-high window by the nudge would go below the floor; grow instead so the
+        // perturbation never degenerates into a request for the current size
         XCTAssertEqual(
             axSizeVerdict(requested: CGSize(width: 500, height: 120), actual: CGSize(width: 200, height: 120), lastRefusedSize: nil),
-            .stuck(perturbation: CGSize(width: 200, height: 100)),
+            .stuck(perturbation: CGSize(width: 200, height: 170)),
         )
     }
 }

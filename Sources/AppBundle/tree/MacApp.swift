@@ -89,10 +89,11 @@ final class MacApp: AbstractApp {
     func closeAndUnregisterAxWindow(_ windowId: UInt32) {
         if serverArgs.isReadOnly { return }
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        _ = withWindowAsync(windowId) { [windows] window, job in
+        _ = withWindowAsync(windowId) { [windows, refusedAxSizes] window, job in
             guard let closeButton = window.get(Ax.closeButtonAttr) else { return }
             if AXUIElementPerformAction(closeButton.cast, kAXPressAction as CFString) == .success {
                 windows.threadGuarded.removeValue(forKey: windowId)
+                refusedAxSizes.threadGuarded.removeValue(forKey: windowId)
             }
         }
     }
@@ -386,23 +387,32 @@ private func setFrame(
     windowId: UInt32,
     refusedAxSizes: ThreadGuardedValue<[UInt32: CGSize]>,
 ) throws {
-    // Set size and then the position. The order is important https://github.com/nikitabobko/AeroSpace/issues/143
-    //                                                        https://github.com/nikitabobko/AeroSpace/issues/335
-    // Intentionally no cancellation checks in between. The sequence may be canceled by jobs that don't re-apply
+    // Intentionally no cancellation checks inside the sequence. It may be canceled by jobs that don't re-apply
     // the frame afterwards (minimize, fullscreen, close). An interrupted sequence would leave the window moved
     // to the target position but not resized
-    if let size { window.set(Ax.sizeAttr, size) }
+    let sizeApplied = applyAxFrame(window, topLeft, size)
+    // The set is a deliberate no-op in read-only mode and fails on AX errors (e.g. a closing window).
+    // Verification would misread both as a refusal
+    guard let size, sizeApplied else { return }
+    try verifyOrUnstickAxSize(window, requested: size, topLeft: topLeft, job, windowId: windowId, refusedAxSizes: refusedAxSizes)
+}
+
+// Set size and then the position. The order is important https://github.com/nikitabobko/AeroSpace/issues/143
+//                                                        https://github.com/nikitabobko/AeroSpace/issues/335
+@discardableResult
+private func applyAxFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize?) -> Bool {
+    var sizeApplied = false
+    if let size { sizeApplied = window.set(Ax.sizeAttr, size) }
     if let topLeft {
         window.set(Ax.topLeftCornerAttr, topLeft)
-        if let size { window.set(Ax.sizeAttr, size) }
+        if let size { sizeApplied = window.set(Ax.sizeAttr, size) }
     }
-    guard let size else { return }
-    try verifyOrUnstickAxSize(window, requested: size, topLeft: topLeft, job, windowId: windowId, refusedAxSizes: refusedAxSizes)
+    return sizeApplied
 }
 
 // Terminals snap their size to the character grid, which legitimately deviates from the requested size.
 // Don't treat such deviations as a refusal
-let axSizeApplyTolerance: CGFloat = 20
+private let axSizeApplyTolerance: CGFloat = 20
 private let axSizeUnstickNudge: CGFloat = 50
 // Some apps need a moment to apply AX frame requests. Delays are in microseconds (usleep)
 private let axSizeReadBackDelay: UInt32 = 50000
@@ -424,27 +434,30 @@ private func verifyOrUnstickAxSize(
     windowId: UInt32,
     refusedAxSizes: ThreadGuardedValue<[UInt32: CGSize]>,
 ) throws {
+    let lastRefusedSize = refusedAxSizes.threadGuarded[windowId]
     guard var actual = window.get(Ax.sizeAttr) else { return }
-    if axSizeVerdict(requested: requested, actual: actual, lastRefusedSize: nil) != .applied {
+    var verdict = axSizeVerdict(requested: requested, actual: actual, lastRefusedSize: lastRefusedSize)
+    if case .stuck = verdict {
         // Some apps apply AX frame requests asynchronously. Re-read before concluding that the request was refused
         try job.checkCancellation()
         usleep(axSizeReadBackDelay)
         guard let reread = window.get(Ax.sizeAttr) else { return }
         actual = reread
+        verdict = axSizeVerdict(requested: requested, actual: actual, lastRefusedSize: lastRefusedSize)
     }
-    switch axSizeVerdict(requested: requested, actual: actual, lastRefusedSize: refusedAxSizes.threadGuarded[windowId]) {
+    switch verdict {
         case .applied:
             refusedAxSizes.threadGuarded.removeValue(forKey: windowId)
         case .knownRefusal:
             break
         case .stuck(let perturbation):
             try job.checkCancellation()
+            // No cancellation checks from here on, for the same reason as in setFrame: an interrupted sequence
+            // would leave the window at the artificial perturbation size, and the jobs that cancel this one
+            // never re-apply the frame. Floating windows would keep the perturbed size forever
             window.set(Ax.sizeAttr, perturbation)
             usleep(axSizeUnstickDelay)
-            try job.checkCancellation()
-            window.set(Ax.sizeAttr, requested)
-            if let topLeft { window.set(Ax.topLeftCornerAttr, topLeft) }
-            window.set(Ax.sizeAttr, requested)
+            applyAxFrame(window, topLeft, requested)
             usleep(axSizeReadBackDelay)
             let final = window.get(Ax.sizeAttr) ?? actual
             if axSizeVerdict(requested: requested, actual: final, lastRefusedSize: nil) == .applied {
@@ -461,20 +474,29 @@ enum AxSizeVerdict: Equatable {
     case stuck(perturbation: CGSize)
 }
 
-func axSizeVerdict(requested: CGSize, actual: CGSize, lastRefusedSize: CGSize?, tolerance: CGFloat = axSizeApplyTolerance) -> AxSizeVerdict {
-    let widthStuck = abs(actual.width - requested.width) > tolerance
-    let heightStuck = abs(actual.height - requested.height) > tolerance
+func axSizeVerdict(requested: CGSize, actual: CGSize, lastRefusedSize: CGSize?) -> AxSizeVerdict {
+    let widthStuck = abs(actual.width - requested.width) > axSizeApplyTolerance
+    let heightStuck = abs(actual.height - requested.height) > axSizeApplyTolerance
     if !widthStuck && !heightStuck { return .applied }
-    // Exact comparison would re-trigger the unstick attempt on sub-pixel jitter. 2 covers rounding
+    // Compare only the stuck dimensions: the accepted dimension legitimately tracks every new layout target,
+    // and the final read-back may have captured it mid-flight. Exact comparison would re-trigger the unstick
+    // attempt on sub-pixel jitter. 2 covers rounding
     if let lastRefusedSize,
-       abs(lastRefusedSize.width - actual.width) <= 2 && abs(lastRefusedSize.height - actual.height) <= 2
+       !widthStuck || abs(lastRefusedSize.width - actual.width) <= 2,
+       !heightStuck || abs(lastRefusedSize.height - actual.height) <= 2
     {
         return .knownRefusal
     }
     let perturbation = heightStuck && !widthStuck
-        ? CGSize(width: max(actual.width - axSizeUnstickNudge, 100), height: actual.height)
-        : CGSize(width: actual.width, height: max(actual.height - axSizeUnstickNudge, 100))
+        ? CGSize(width: nudged(actual.width), height: actual.height)
+        : CGSize(width: actual.width, height: nudged(actual.height))
     return .stuck(perturbation: perturbation)
+}
+
+// Shrinking is preferred because it always stays within the screen, but grow instead of degenerating
+// to a no-op when the dimension is too small to shrink
+private func nudged(_ dimension: CGFloat) -> CGFloat {
+    dimension - axSizeUnstickNudge >= 100 ? dimension - axSizeUnstickNudge : dimension + axSizeUnstickNudge
 }
 
 // Some undocumented magic
