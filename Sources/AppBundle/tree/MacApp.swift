@@ -16,6 +16,9 @@ final class MacApp: AbstractApp {
     var lastNativeFocusedWindowId: UInt32? = nil
     private var thread: Thread?
     private var setFrameJobs: [UInt32: RunLoopJob] = [:]
+    // Last known size of windows that silently refused an AX resize even after an unstick attempt.
+    // See verifyOrUnstickAxSize
+    private let refusedAxSizes: ThreadGuardedValue<[UInt32: CGSize]> = .init([:])
     @MainActor private static var focusJob: RunLoopJob? = nil
 
     /*conforms*/ var name: String? { nsApp.localizedName }
@@ -97,10 +100,11 @@ final class MacApp: AbstractApp {
     func closeAndUnregisterAxWindow(_ windowId: UInt32) {
         if serverArgs.isReadOnly { return }
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        _ = withWindowAsync(windowId) { [windows] window, job in
+        _ = withWindowAsync(windowId) { [windows, refusedAxSizes] window, job in
             guard let closeButton = window.get(Ax.closeButtonAttr) else { return }
             if AXUIElementPerformAction(closeButton.cast, kAXPressAction as CFString) == .success {
                 windows.threadGuarded.removeValue(forKey: windowId)
+                refusedAxSizes.threadGuarded.removeValue(forKey: windowId)
             }
         }
     }
@@ -144,18 +148,18 @@ final class MacApp: AbstractApp {
 
     func setAxFrame(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        setFrameJobs[windowId] = withWindowAsync(windowId) { [axApp] window, job in
+        setFrameJobs[windowId] = withWindowAsync(windowId) { [axApp, refusedAxSizes] window, job in
             try disableAnimations(app: axApp.threadGuarded, job) {
-                try setFrame(window, topLeft, size, job)
+                try setFrame(window, topLeft, size, job, windowId: windowId, refusedAxSizes: refusedAxSizes)
             }
         }
     }
 
     func setAxFrameBlocking(_ windowId: UInt32, _ topLeft: CGPoint?, _ size: CGSize?) async throws {
         setFrameJobs.removeValue(forKey: windowId)?.cancel()
-        try await withWindow(windowId) { [axApp] window, job in
+        try await withWindow(windowId) { [axApp, refusedAxSizes] window, job in
             try disableAnimations(app: axApp.threadGuarded, job) {
-                try setFrame(window, topLeft, size, job)
+                try setFrame(window, topLeft, size, job, windowId: windowId, refusedAxSizes: refusedAxSizes)
             }
         }
     }
@@ -283,7 +287,7 @@ final class MacApp: AbstractApp {
             return []
         }
         guard let thread else { return [] }
-        let (alive, dead) = try await thread.runInLoop { [nsApp, windows, axApp] (job) -> ([UInt32], [UInt32]) in
+        let (alive, dead) = try await thread.runInLoop { [nsApp, windows, axApp, refusedAxSizes] (job) -> ([UInt32], [UInt32]) in
             var alive: [UInt32: AxWindow] = windows.threadGuarded
             var dead = [UInt32: AxWindow]()
             // Second line of defence against lock screen. See the first line of defence: closedWindowsCache
@@ -292,6 +296,9 @@ final class MacApp: AbstractApp {
                 (alive, dead) = try alive.partition {
                     try job.checkCancellation()
                     return $0.value.ax.containingWindowId() != nil
+                }
+                for windowId in dead.keys {
+                    refusedAxSizes.threadGuarded.removeValue(forKey: windowId)
                 }
             }
 
@@ -319,8 +326,9 @@ final class MacApp: AbstractApp {
             job.cancel()
         }
         setFrameJobs = [:]
-        thread?.runInLoopAsync { [windows, appAxSubscriptions, axApp] job in
+        thread?.runInLoopAsync { [windows, appAxSubscriptions, axApp, refusedAxSizes] job in
             appAxSubscriptions.destroy() // Destroy AX objects in reverse order of their creation
+            refusedAxSizes.destroy()
             windows.destroy()
             axApp.destroy()
             CFRunLoopStop(CFRunLoopGetCurrent())
@@ -385,14 +393,124 @@ extension [UInt32: AxWindow] {
     }
 }
 
-private func setFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize?, _ job: RunLoopJob) throws {
-    // Set size and then the position. The order is important https://github.com/nikitabobko/AeroSpace/issues/143
-    //                                                        https://github.com/nikitabobko/AeroSpace/issues/335
-    if let size { window.set(Ax.sizeAttr, size) }
-    try job.checkCancellation()
-    if let topLeft { window.set(Ax.topLeftCornerAttr, topLeft) } else { return }
-    try job.checkCancellation()
-    if let size { window.set(Ax.sizeAttr, size) }
+private func setFrame(
+    _ window: AXUIElement,
+    _ topLeft: CGPoint?,
+    _ size: CGSize?,
+    _ job: RunLoopJob,
+    windowId: UInt32,
+    refusedAxSizes: ThreadGuardedValue<[UInt32: CGSize]>,
+) throws {
+    // Intentionally no cancellation checks inside the sequence. It may be canceled by jobs that don't re-apply
+    // the frame afterwards (minimize, fullscreen, close). An interrupted sequence would leave the window moved
+    // to the target position but not resized
+    let sizeApplied = applyAxFrame(window, topLeft, size)
+    // The set is a deliberate no-op in read-only mode and fails on AX errors (e.g. a closing window).
+    // Verification would misread both as a refusal
+    guard let size, sizeApplied else { return }
+    try verifyOrUnstickAxSize(window, requested: size, topLeft: topLeft, job, windowId: windowId, refusedAxSizes: refusedAxSizes)
+}
+
+// Set size and then the position. The order is important https://github.com/nikitabobko/AeroSpace/issues/143
+//                                                        https://github.com/nikitabobko/AeroSpace/issues/335
+@discardableResult
+private func applyAxFrame(_ window: AXUIElement, _ topLeft: CGPoint?, _ size: CGSize?) -> Bool {
+    var sizeApplied = false
+    if let size { sizeApplied = window.set(Ax.sizeAttr, size) }
+    if let topLeft {
+        window.set(Ax.topLeftCornerAttr, topLeft)
+        if let size { sizeApplied = window.set(Ax.sizeAttr, size) }
+    }
+    return sizeApplied
+}
+
+// Terminals snap their size to the character grid, which legitimately deviates from the requested size.
+// Don't treat such deviations as a refusal
+private let axSizeApplyTolerance: CGFloat = 20
+private let axSizeUnstickNudge: CGFloat = 50
+// Some apps need a moment to apply AX frame requests. Delays are in microseconds (usleep)
+private let axSizeReadBackDelay: UInt32 = 50000
+private let axSizeUnstickDelay: UInt32 = 150_000
+
+// Some apps accept AX resize requests (AXUIElementSetAttributeValue returns .success) and silently ignore them.
+// E.g. Microsoft Teams pins the width of its windows while a meeting is active. Such a window can be unstuck:
+// a size request that keeps the refused dimension at its current value and changes only the other dimension is
+// processed, and the very next frame request is applied normally.
+//
+// Other windows refuse sizes legitimately and permanently (e.g. a window with a min width tiled into a narrower
+// slot). refusedAxSizes remembers the windows that didn't react to the unstick attempt, so that the attempt
+// (a visible resize) is not repeated on every layout pass while the window keeps refusing
+private func verifyOrUnstickAxSize(
+    _ window: AXUIElement,
+    requested: CGSize,
+    topLeft: CGPoint?,
+    _ job: RunLoopJob,
+    windowId: UInt32,
+    refusedAxSizes: ThreadGuardedValue<[UInt32: CGSize]>,
+) throws {
+    let lastRefusedSize = refusedAxSizes.threadGuarded[windowId]
+    guard var actual = window.get(Ax.sizeAttr) else { return }
+    var verdict = axSizeVerdict(requested: requested, actual: actual, lastRefusedSize: lastRefusedSize)
+    if case .stuck = verdict {
+        // Some apps apply AX frame requests asynchronously. Re-read before concluding that the request was refused
+        try job.checkCancellation()
+        usleep(axSizeReadBackDelay)
+        guard let reread = window.get(Ax.sizeAttr) else { return }
+        actual = reread
+        verdict = axSizeVerdict(requested: requested, actual: actual, lastRefusedSize: lastRefusedSize)
+    }
+    switch verdict {
+        case .applied:
+            refusedAxSizes.threadGuarded.removeValue(forKey: windowId)
+        case .knownRefusal:
+            break
+        case .stuck(let perturbation):
+            try job.checkCancellation()
+            // No cancellation checks from here on, for the same reason as in setFrame: an interrupted sequence
+            // would leave the window at the artificial perturbation size, and the jobs that cancel this one
+            // never re-apply the frame. Floating windows would keep the perturbed size forever
+            window.set(Ax.sizeAttr, perturbation)
+            usleep(axSizeUnstickDelay)
+            applyAxFrame(window, topLeft, requested)
+            usleep(axSizeReadBackDelay)
+            let final = window.get(Ax.sizeAttr) ?? actual
+            if axSizeVerdict(requested: requested, actual: final, lastRefusedSize: nil) == .applied {
+                refusedAxSizes.threadGuarded.removeValue(forKey: windowId)
+            } else {
+                refusedAxSizes.threadGuarded[windowId] = final
+            }
+    }
+}
+
+enum AxSizeVerdict: Equatable {
+    case applied
+    case knownRefusal
+    case stuck(perturbation: CGSize)
+}
+
+func axSizeVerdict(requested: CGSize, actual: CGSize, lastRefusedSize: CGSize?) -> AxSizeVerdict {
+    let widthStuck = abs(actual.width - requested.width) > axSizeApplyTolerance
+    let heightStuck = abs(actual.height - requested.height) > axSizeApplyTolerance
+    if !widthStuck && !heightStuck { return .applied }
+    // Compare only the stuck dimensions: the accepted dimension legitimately tracks every new layout target,
+    // and the final read-back may have captured it mid-flight. Exact comparison would re-trigger the unstick
+    // attempt on sub-pixel jitter. 2 covers rounding
+    if let lastRefusedSize,
+       !widthStuck || abs(lastRefusedSize.width - actual.width) <= 2,
+       !heightStuck || abs(lastRefusedSize.height - actual.height) <= 2
+    {
+        return .knownRefusal
+    }
+    let perturbation = heightStuck && !widthStuck
+        ? CGSize(width: nudged(actual.width), height: actual.height)
+        : CGSize(width: actual.width, height: nudged(actual.height))
+    return .stuck(perturbation: perturbation)
+}
+
+// Shrinking is preferred because it always stays within the screen, but grow instead of degenerating
+// to a no-op when the dimension is too small to shrink
+private func nudged(_ dimension: CGFloat) -> CGFloat {
+    dimension - axSizeUnstickNudge >= 100 ? dimension - axSizeUnstickNudge : dimension + axSizeUnstickNudge
 }
 
 // Some undocumented magic
