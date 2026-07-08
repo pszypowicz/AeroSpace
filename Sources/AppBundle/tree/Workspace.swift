@@ -35,6 +35,10 @@ final class Workspace: TreeNode, NonLeafTreeNodeObject, Hashable, Comparable {
     nonisolated private let nameLogicalSegments: StringLogicalSegments
     /// `assignedMonitorPoint` must be interpreted only when the workspace is invisible
     fileprivate var assignedMonitorPoint: CGPoint? = nil
+    /// Per-workspace overrides for normalization flags. Empty by default; absent
+    /// kinds fall through to the global config value. Process-lifetime only - not
+    /// persisted across restarts.
+    var normalizationOverride: [NormalizationKind: Bool] = [:]
 
     @MainActor
     private init(_ name: String) {
