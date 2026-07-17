@@ -80,16 +80,22 @@ final class Workspace: TreeNode, NonLeafTreeNodeObject, Hashable, Comparable {
         return "Workspace(\(description))"
     }
 
+    /// True when garbageCollectUnusedWorkspaces would destroy this workspace.
+    @MainActor
+    var isDoomedToGarbageCollection: Bool {
+        !config.persistentWorkspaces.contains(name)
+            && isEffectivelyEmpty
+            && !isVisible
+            && name != focus.workspace.name
+    }
+
     @MainActor
     static func garbageCollectUnusedWorkspaces() {
         for name in config.persistentWorkspaces {
             _ = get(byName: name) // Make sure that all persistent workspaces are "cached"
         }
         workspaceNameToWorkspace = workspaceNameToWorkspace.filter { (_, workspace: Workspace) in
-            config.persistentWorkspaces.contains(workspace.name) ||
-                !workspace.isEffectivelyEmpty ||
-                workspace.isVisible ||
-                workspace.name == focus.workspace.name
+            !workspace.isDoomedToGarbageCollection
         }
     }
 
