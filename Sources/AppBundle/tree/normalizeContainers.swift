@@ -1,10 +1,29 @@
+import Common
+
+extension TreeNode {
+    /// Returns the node's workspace override if set, otherwise the global config flag.
+    /// A detached node belongs to no workspace, so it resolves to the global config.
+    @MainActor func isNormalizationEnabled(_ kind: NormalizationKind) -> Bool {
+        nodeWorkspace?.normalizationOverride[kind] ?? config.isNormalizationEnabledGlobally(kind)
+    }
+}
+
+extension Config {
+    fileprivate func isNormalizationEnabledGlobally(_ kind: NormalizationKind) -> Bool {
+        switch kind {
+            case .flattenContainers: enableNormalizationFlattenContainers
+            case .oppositeOrientationForNestedContainers: enableNormalizationOppositeOrientationForNestedContainers
+        }
+    }
+}
+
 extension Workspace {
     @MainActor func normalizeContainers() {
         // Always called: the function also removes effectively-empty containers
         // regardless of the flatten flag.
         // Beware! rootTilingContainer may change after this line of code
-        rootTilingContainer.unbindEmptyAndAutoFlatten(allowFlatten: config.enableNormalizationFlattenContainers)
-        if config.enableNormalizationOppositeOrientationForNestedContainers {
+        rootTilingContainer.unbindEmptyAndAutoFlatten(allowFlatten: isNormalizationEnabled(.flattenContainers))
+        if isNormalizationEnabled(.oppositeOrientationForNestedContainers) {
             rootTilingContainer.normalizeOppositeOrientationForNestedContainers()
         }
     }
