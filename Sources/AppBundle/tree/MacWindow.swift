@@ -22,9 +22,7 @@ final class MacWindow: Window {
         let data = try await unbindAndGetBindingDataForNewWindow(
             windowId,
             macApp,
-            isStartup
-                ? (rect?.center.monitorApproximation ?? mainMonitor).activeWorkspace
-                : focus.workspace,
+            try await workspaceForNewWindow(windowId, macApp, rect, .cancellable),
             window: nil,
             .cancellable,
         )
@@ -207,6 +205,34 @@ extension Window {
             : try await unbindAndGetBindingDataForNewWindow(self.asMacWindow().windowId, self.asMacWindow().macApp, workspace, window: self, cm)
         bind(to: data.parent, adaptiveWeight: data.adaptiveWeight, index: data.index)
     }
+}
+
+// Decide which workspace a newly detected window belongs to.
+//
+// Normally this is the focused workspace (or, at startup, the workspace under the window's rect). But an app
+// can spawn a companion window that is already in macOS native fullscreen the first time we see it - e.g. a
+// browser's fullscreen-video presentation window - created on its own macOS Space. Such a window wasn't
+// placed here by the user, and filing it under whatever happens to be focused makes an unrelated workspace
+// silently acquire a transient fullscreen occupant. When the window is already native fullscreen at first
+// sight and its app has an existing window, inherit that window's workspace instead. A window the user
+// fullscreens later doesn't reach this path - it is already registered - so this only re-homes born-fullscreen
+// companions and leaves normal placement untouched.
+@MainActor
+private func workspaceForNewWindow(_ windowId: UInt32, _ macApp: MacApp, _ rect: Rect?, _ cm: CancellationMode) async throws -> Workspace {
+    let fallback = isStartup
+        ? (rect?.center.monitorApproximation ?? mainMonitor).activeWorkspace
+        : focus.workspace
+    let appWindows = MacWindow.allWindows.filter { $0.macApp.pid == macApp.pid && $0.windowId != windowId }
+    // No existing window of this app means there is no parent to inherit from.
+    guard !appWindows.isEmpty, try await macApp.isMacosNativeFullscreen(windowId, cm) == true else { return fallback }
+    // Prefer a sibling that lives on the host desktop (the likely parent) over another off-desktop window.
+    let parent = appWindows.first { win in
+        switch win.windowParentCases {
+            case .tilingContainer, .floatingWindowsContainer: true
+            default: false
+        }
+    } ?? appWindows.first
+    return parent?.nodeWorkspace ?? fallback
 }
 
 // The function is private because it's unsafe. It leaves the window in unbound state
