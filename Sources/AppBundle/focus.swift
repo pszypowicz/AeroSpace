@@ -166,6 +166,7 @@ extension Workspace {
     broadcastEvent(.focusChanged(
         windowId: focus.windowOrNil?.windowId,
         workspace: focus.workspace.name,
+        macosFullscreen: focus.windowOrNil?.isMacosNativeFullscreen ?? false,
     ))
     return await config.onFocusChanged.run(env.withFocus(focus), io)
 }

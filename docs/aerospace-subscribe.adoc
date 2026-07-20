@@ -38,7 +38,9 @@ include::./util/conditional-arguments-header.adoc[]
 
 The following events can be subscribed to:
 
-focus-changed:: Fired when window focus changes. Includes `windowId`, `workspace`.
+focus-changed:: Fired when window focus changes. Includes `windowId`, `workspace`, `macosFullscreen`.
+`macosFullscreen` is `true` when the focused window is in macOS native fullscreen (its own macOS Space),
+as opposed to AeroSpace's own `fullscreen` mode.
 
 focused-monitor-changed:: Fired when the focused monitor changes. Includes `workspace`, `monitorId`.
 
@@ -59,7 +61,7 @@ Events are output as JSON lines (one JSON object per line):
 {"_event":"focused-monitor-changed","monitorId":1,"workspace":"M"}
 {"_event":"focused-workspace-changed","prevWorkspace":"M","workspace":"M"}
 {"_event":"mode-changed","mode":"main"}
-{"_event":"focus-changed","windowId":28218,"workspace":"M"}
+{"_event":"focus-changed","macosFullscreen":false,"windowId":28218,"workspace":"M"}
 ----
 
 // end::body[]

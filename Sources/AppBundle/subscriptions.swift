@@ -20,7 +20,11 @@ func handleSubscribeAndWaitTillError(_ connection: NWConnection, _ args: Subscri
             let event: ServerEvent
             switch eventType {
                 case .focusChanged:
-                    event = .focusChanged(windowId: f.windowOrNil?.windowId, workspace: f.workspace.name)
+                    event = .focusChanged(
+                        windowId: f.windowOrNil?.windowId,
+                        workspace: f.workspace.name,
+                        macosFullscreen: f.windowOrNil?.isMacosNativeFullscreen ?? false,
+                    )
                 case .workspaceChanged:
                     event = .workspaceChanged(workspace: f.workspace.name, prevWorkspace: f.workspace.name)
                 case .modeChanged:

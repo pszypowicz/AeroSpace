@@ -61,6 +61,15 @@ extension Window {
         }
     }
 
+    /// Whether the window currently sits in macOS native fullscreen (its own macOS Space), as opposed to
+    /// AeroSpace's own `fullscreen` rendering mode (`isFullscreen`). Derived from the parked-in container.
+    var isMacosNativeFullscreen: Bool {
+        switch windowParentCases {
+            case .macosFullscreenWindowsContainer: true
+            default: false
+        }
+    }
+
     @discardableResult
     @MainActor
     func bindAsFloatingWindow(to workspace: Workspace) -> BindingData? {

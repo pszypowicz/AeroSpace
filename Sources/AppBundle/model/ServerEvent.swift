@@ -19,11 +19,13 @@ public struct ServerEvent: Codable, Sendable {
     private var mode: String?
     // periphery:ignore - false positive unused warning. The var properties are serialized to JSON
     private var binding: String?
+    // periphery:ignore - false positive unused warning. The var properties are serialized to JSON
+    private var macosFullscreen: Bool?
 
     public var eventType: ServerEventType { _event }
 
-    public static func focusChanged(windowId: UInt32?, workspace: String) -> ServerEvent {
-        ServerEvent(_event: .focusChanged, windowId: windowId, workspace: workspace)
+    public static func focusChanged(windowId: UInt32?, workspace: String, macosFullscreen: Bool) -> ServerEvent {
+        ServerEvent(_event: .focusChanged, windowId: windowId, workspace: workspace, macosFullscreen: macosFullscreen)
     }
 
     public static func focusedMonitorChanged(workspace: String, monitorId_oneBased: Int) -> ServerEvent {
