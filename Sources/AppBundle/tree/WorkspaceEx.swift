@@ -51,6 +51,22 @@ extension Workspace {
         }
     }
 
+    /// A workspace is "hollow" when it holds macOS native fullscreen windows (each on its own macOS Space)
+    /// but has nothing on its host desktop, so visiting it shows a bare desktop while its windows display on
+    /// their own Spaces. Minimized and hidden-app windows don't count as host-desktop content.
+    @MainActor var isHollow: Bool {
+        var hasNativeFullscreen = false
+        var hasHostDesktopWindow = false
+        for window in allLeafWindowsRecursive {
+            switch window.windowParentCases {
+                case .macosFullscreenWindowsContainer: hasNativeFullscreen = true
+                case .tilingContainer, .floatingWindowsContainer: hasHostDesktopWindow = true
+                case .macosMinimizedWindowsContainer, .macosHiddenAppsWindowsContainer, .macosPopupWindowsContainer, .unbound: break
+            }
+        }
+        return hasNativeFullscreen && !hasHostDesktopWindow
+    }
+
     @MainActor var forceAssignedMonitor: Monitor? {
         guard let monitorDescriptions = config.workspaceToMonitorForceAssignment[name] else { return nil }
         let sortedMonitors = sortedMonitors
