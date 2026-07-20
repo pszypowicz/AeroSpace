@@ -22,6 +22,10 @@ aerospace workspace [-h|--help] [--wrap-around] [--stdin|--no-stdin] (next|prev)
 
 {manpurpose}
 
+If the focused window is one of the target workspace's macOS native fullscreen windows, focusing that same
+workspace returns focus to its tiling rather than being a no-op, letting you leave the fullscreen Space with
+the workspace's own shortcut. In that case `--fail-if-noop` treats it as a successful switch.
+
 *2. (next|prev) syntax*
 
 Focuses next or previous workspace in *the list*.
