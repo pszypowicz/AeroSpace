@@ -28,6 +28,16 @@ struct WorkspaceCommand: Command {
                 }
         }
         if focusedWs.name == workspaceName {
+            // Returning to a workspace while focused on one of its macOS-native-fullscreen windows must be a
+            // real move, not a no-op: focus a tiling window so macOS leaves the fullscreen Space and a
+            // focus-changed event fires. focusWorkspace() would re-pick the workspace's MRU window - the
+            // fullscreen one - and dedupe to nothing, so a tiling window is targeted explicitly.
+            if let focusedWindow = target.windowOrNil,
+               case .macosFullscreenWindowsContainer = focusedWindow.windowParentCases,
+               let tilingWindow = focusedWs.rootTilingContainer.mostRecentWindowRecursive
+            {
+                return .from(bool: tilingWindow.focusWindow())
+            }
             return switch args.failIfNoop {
                 case true: .fail
                 case false:
