@@ -20,6 +20,10 @@ auto-reload-config = false
 # Normalizations. See: https://nikitabobko.github.io/AeroSpace/guide#normalization
 enable-normalization-flatten-containers = true
 enable-normalization-opposite-orientation-for-nested-containers = true
+# Opt-in BSP normalization. Folds any 'tiles' container with more than two
+# children into a right-deep binary tree on every workspace refresh.
+# See: https://github.com/nikitabobko/AeroSpace/issues/260
+enable-normalization-bsp-shape = false
 
 # See: https://nikitabobko.github.io/AeroSpace/guide#layouts
 # The 'accordion-padding' specifies the size of accordion padding
