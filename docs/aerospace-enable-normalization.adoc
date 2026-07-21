@@ -26,7 +26,7 @@ The override is scoped to a single workspace (the focused workspace by default, 
 Overrides are not persisted across AeroSpace restarts.
 Setting an override on a workspace that would be destroyed immediately is an error.
 
-`<kind>` is one of `flatten-containers`, `opposite-orientation-for-nested-containers` (the suffix of the corresponding `enable-normalization-<kebab-name>` global config key).
+`<kind>` is one of `flatten-containers`, `opposite-orientation-for-nested-containers`, `bsp-shape` (the suffix of the corresponding `enable-normalization-<kebab-name>` global config key). See xref:bsp-mode.adoc[the BSP mode guide] for the recommended `bsp-shape` workflow.
 
 * `on` sets the workspace override to true regardless of the global config.
 * `off` sets the workspace override to false regardless of the global config.

@@ -128,7 +128,7 @@ aerospace -h;
 <number> ::= {{{ true }}};
 <monitor_pattern> ::= {{{ true }}};
 <layouts> ::= h_tiles|v_tiles|h_accordion|v_accordion|tiles|accordion|horizontal|vertical|tiling|floating;
-<normalization_kind> ::= flatten-containers|opposite-orientation-for-nested-containers;
+<normalization_kind> ::= flatten-containers|opposite-orientation-for-nested-containers|bsp-shape;
 
 <list_workspaces1_flag> ::= --visible [no] | --empty [no] | --format <output_format> | --format <output_format> | --count | --json;
 

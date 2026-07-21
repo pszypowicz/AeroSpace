@@ -16,6 +16,16 @@ Globally, in `aerospace.toml`:
 enable-normalization-bsp-shape = true
 ----
 
+Per-workspace at runtime (override is in-memory only):
+
+[source,bash]
+----
+aerospace enable-normalization bsp-shape on --workspace 5
+aerospace enable-normalization bsp-shape off --workspace 5
+aerospace enable-normalization bsp-shape toggle    # focused workspace
+aerospace enable-normalization bsp-shape reset --workspace 5
+----
+
 [#direction-keys]
 == Direction keys: `move` vs `swap`
 
