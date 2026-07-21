@@ -361,6 +361,14 @@ Configured by `enable-normalization-flatten-containers`
 . Containers that nest into each other must have opposite orientations.
 Configured by `enable-normalization-opposite-orientation-for-nested-containers`
 
+A third, opt-in normalization rewrites flat tiling subtrees into binary BSP shape:
+
+[start=3]
+. `enable-normalization-bsp-shape` (default `false`).
+When enabled, every workspace refresh folds any `tiles` container that has more than two children into a right-deep tree of two-child containers with alternating orientation.
+This is the BSP / Fibonacci layout slot from the broader normalization framework discussed in https://github.com/nikitabobko/AeroSpace/issues/260[issue #260]: enabling it produces and preserves a Fibonacci-style tree on every refresh.
+Accordion subtrees are skipped - they remain "escape islands" inside BSP workspaces.
+
 [.lead]
 *Example 1*
 

@@ -4,4 +4,5 @@
 public enum NormalizationKind: String, CaseIterable, Sendable, Equatable {
     case flattenContainers = "flatten-containers"
     case oppositeOrientationForNestedContainers = "opposite-orientation-for-nested-containers"
+    case bspShape = "bsp-shape"
 }
